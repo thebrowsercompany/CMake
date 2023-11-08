@@ -1,0 +1,49 @@
+name: CMake
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: swift-build-windows-latest-32-cores
+
+    steps:
+    - uses: compnerd/gha-setup-vsdevenv@main
+    - uses: actions/checkout@v4
+      with:
+        path: ${{ github.workspace }}/SourceCache/cmake
+    - run: cmake -B ${{ github.workspace }}/BinaryCache/cmake -G Ninja -S ${{ github.workspace }}/SourceCache/cmake -D CMAKE_BUILD_TYPE=Release
+    - run: cmake --build ${{ github.workspace }}/BinaryCache/cmake
+    - run: |
+        cd ${{ github.workspace }}/BinaryCache/cmake
+        cpack -G WIX
+    - uses: actions/upload-artifact@v3
+      with:
+        name: cmake-windows-amd64
+        path: ${{ github.workspace }}/BinaryCache/cmake/*.msi
+    - id: vars
+      run: |
+        $Msi = Get-ChildItem ${{ github.workspace }}/BinaryCache/cmake/*.msi | Select-Object -First 1
+        $Artifact = $Msi.Name
+        $Location = $Msi.FullName
+        $Release = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
+        Write-Output "artifact=$($Artifact)" >> $Env:GITHUB_OUTPUT
+        Write-Output "location=$($Location)" >> $Env:GITHUB_OUTPUT
+        Write-Output "release=$($Release)" >> $Env:GITHUB_OUTPUT
+    - uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      id: create_release
+      with:
+        draft: false
+        prerelease: false
+        release_name: ${{ steps.vars.outputs.release }}
+        tag_name: ${{ steps.vars.outputs.release }}
+    - uses: actions/upload-release-asset@v1.0.2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        asset_content_type: application/octet-stream
+        asset_name: ${{ steps.vars.outputs.artifact }}
+        asset_path: ${{ steps.vars.outputs.location }}
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
