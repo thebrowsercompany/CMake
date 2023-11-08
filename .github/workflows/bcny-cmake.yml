@@ -1,0 +1,50 @@
+name: CMake
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: swift-build-windows-latest-32-cores
+
+    steps:
+    - uses: compnerd/gha-setup-vsdevenv@main
+    - uses: actions/checkout@v4
+      with:
+        path: ${{ github.workspace }}/SourceCache/cmake
+    - run: cmake -B ${{ github.workspace }}/BinaryCache/cmake -G Ninja -S ${{ github.workspace }}/SourceCache/cmake -D CMAKE_BUILD_TYPE=Release
+    - run: cmake --build ${{ github.workspace }}/BinaryCache/cmake
+    - run: |
+        cd ${{ github.workspace }}/BinaryCache/cmake
+        cpack -G WIX
+    - uses: actions/upload-artifact@v3
+      with:
+        name: cmake-windows-amd64
+        path: ${{ github.workspace }}/BinaryCache/cmake/*.msi
+    - id: get-version
+      run: |
+        echo @"
+        include($(cygpath -m ${{ github.workspace }})/SourceCache/cmake/Source/CMakeVersion.cmake)
+        message(`${CMake_VERSION})
+        "@ | Set-Content version.cmake -Encoding utf8
+        cmake -P version.cmake 2> version.txt
+        $CMake_Version = Get-Content -Path version.txt
+        "CMake_VERSION=${CMake_VERSION}" | Out-File -FilePath ${env:GITHUB_OUTPUT} -Encoding utf8 -Append
+    - uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      id: create_release
+      with:
+        draft: false
+        prerelease: false
+        release_name: ${{ steps.get-version.outputs.CMake_VERSION }}
+        tag_name: ${{ steps.get-version.outputs.CMake_VERSION }}
+    - uses: actions/upload-release-asset@v1.0.2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        asset_content_type: application/octet-stream
+        asset_name: cmake-${{ steps.get-version.CMake_VERSION }}-windows-x64.msi
+        asset_path: |
+          ${{ github.workspace }}/BinaryCache/cmake/*.msi
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
