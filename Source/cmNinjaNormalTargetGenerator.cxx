@@ -1563,6 +1563,12 @@ void cmNinjaNormalTargetGenerator::WriteLinkStatement(
   // Ninja should restat after linking if and only if there are byproducts.
   vars["RESTAT"] = byproducts.ExplicitOuts.empty() ? "" : "1";
 
+  // Swift link steps always need to restat because the swift driver does not
+  // rewrite object files if they would not change.
+  if (this->TargetLinkLanguage(config) == "Swift") {
+    vars["RESTAT"] = "1";
+  }
+
   linkBuild.Outputs.reserve(linkBuild.Outputs.size() +
                             byproducts.ExplicitOuts.size());
   std::move(byproducts.ExplicitOuts.begin(), byproducts.ExplicitOuts.end(),
