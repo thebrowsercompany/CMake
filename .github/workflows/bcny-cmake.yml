@@ -8,8 +8,5 @@ jobs:
     runs-on: swift-build-windows-latest-32-cores
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        path: ${{ github.workspace }}/SourceCache/cmake
     - run: |
-        Write-Output "Current Date and Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        Write-Output "Current Date and Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzzz')"
