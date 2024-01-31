@@ -6,30 +6,64 @@ on:
 jobs:
   build:
     runs-on: swift-build-windows-latest-32-cores
+    outputs:
+      artifact_amd64: ${{ steps.vars.outputs.artifact_amd64 }}
+      artifact_arm64: ${{ steps.vars.outputs.artifact_arm64 }}
+      location_amd64: ${{ steps.vars.outputs.location_amd64 }}
+      location_arm64: ${{ steps.vars.outputs.location_arm64 }}
+      release: $${{ steps.vars.outputs.release }}
+
+    strategy:
+      matrix:
+        include:
+          - arch: 'amd64'
+            cmake_arch: 'AMD64'
+          - arch: 'arm64'
+            cmake_arch: 'ARM64'
 
     steps:
     - uses: compnerd/gha-setup-vsdevenv@main
+      with:
+        host_arch: amd64
+        components: 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64;Microsoft.VisualStudio.Component.VC.Tools.ARM64'
+        arch: ${{ matrix.arch }}
     - uses: actions/checkout@v4
       with:
         path: ${{ github.workspace }}/SourceCache/cmake
-    - run: cmake -B ${{ github.workspace }}/BinaryCache/cmake -G Ninja -S ${{ github.workspace }}/SourceCache/cmake -D CMAKE_BUILD_TYPE=Release
-    - run: cmake --build ${{ github.workspace }}/BinaryCache/cmake
+    - run: cmake -B ${{ github.workspace }}/BinaryCache/cmake/${{ matrix.arch }} -G Ninja -S ${{ github.workspace }}/SourceCache/cmake -D CMAKE_BUILD_TYPE=Release -D CMAKE_SYSTEM_NAME=Windows -D CMAKE_SYSTEM_PROCESSOR=${{ matrix.cmake_arch }} -D CMAKE_CROSSCOMPILING=1
+    - run: cmake --build ${{ github.workspace }}/BinaryCache/cmake/${{ matrix.arch }}
     - run: |
-        cd ${{ github.workspace }}/BinaryCache/cmake
+        cd ${{ github.workspace }}/BinaryCache/cmake/${{ matrix.arch }}
         cpack -G WIX
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
-        name: cmake-windows-amd64
-        path: ${{ github.workspace }}/BinaryCache/cmake/*.msi
+        name: cmake-windows-${{ matrix.arch }}
+        path: ${{ github.workspace }}/BinaryCache/cmake/${{ matrix.arch }}/*.msi
     - id: vars
       run: |
-        $Msi = Get-ChildItem ${{ github.workspace }}/BinaryCache/cmake/*.msi | Select-Object -First 1
+        $Msi = Get-ChildItem ${{ github.workspace }}/BinaryCache/cmake/${{ matrix.arch }}/*.msi | Select-Object -First 1
         $Artifact = $Msi.Name
         $Location = $Msi.FullName
         $Release = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
-        Write-Output "artifact=$($Artifact)" >> $Env:GITHUB_OUTPUT
-        Write-Output "location=$($Location)" >> $Env:GITHUB_OUTPUT
+        Write-Output "artifact_${{ matrix.arch }}=$($Artifact)" >> $Env:GITHUB_OUTPUT
+        Write-Output "location_${{ matrix.arch }}=$($Location)" >> $Env:GITHUB_OUTPUT
         Write-Output "release=$($Release)" >> $Env:GITHUB_OUTPUT
+
+  release:
+    runs-on: swift-build-windows-latest-32-cores
+    needs: [build]
+
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: cmake-windows-amd64
+        path: ${{ github.workspace }}/tmp/amd64
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: cmake-windows-arm64
+        path: ${{ github.workspace }}/tmp/arm64
+
     - uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -37,13 +71,23 @@ jobs:
       with:
         draft: false
         prerelease: false
-        release_name: ${{ steps.vars.outputs.release }}
-        tag_name: ${{ steps.vars.outputs.release }}
+        release_name: ${{ needs.build.outputs.release }}
+        tag_name: ${{ needs.build.outputs.release }}
+
     - uses: actions/upload-release-asset@v1.0.2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         asset_content_type: application/octet-stream
-        asset_name: ${{ steps.vars.outputs.artifact }}
-        asset_path: ${{ steps.vars.outputs.location }}
+        asset_name: ${{ needs.build.outputs.artifact_amd64 }}
+        asset_path: ${{ github.workspace }}/tmp/amd64/*
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+
+    - uses: actions/upload-release-asset@v1.0.2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        asset_content_type: application/octet-stream
+        asset_name: ${{ needs.build.outputs.artifact_arm64 }}
+        asset_path: ${{ github.workspace }}/tmp/arm64/*
         upload_url: ${{ steps.create_release.outputs.upload_url }}
