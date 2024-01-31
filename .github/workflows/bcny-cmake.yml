@@ -7,29 +7,62 @@ jobs:
   build:
     runs-on: swift-build-windows-latest-32-cores
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: 'amd64'
+            cmake_arch: 'AMD64'
+            cpack_arch: 'x64'
+          - arch: 'arm64'
+            cmake_arch: 'ARM64'
+            cpack_arch: 'arm64'
+
     steps:
     - uses: compnerd/gha-setup-vsdevenv@main
+      with:
+        host_arch: amd64
+        components: 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64;Microsoft.VisualStudio.Component.VC.Tools.ARM64'
+        arch: ${{ matrix.arch }}
     - uses: actions/checkout@v4
       with:
         path: ${{ github.workspace }}/SourceCache/cmake
-    - run: cmake -B ${{ github.workspace }}/BinaryCache/cmake -G Ninja -S ${{ github.workspace }}/SourceCache/cmake -D CMAKE_BUILD_TYPE=Release
+    - run: >
+        cmake -B ${{ github.workspace }}/BinaryCache/cmake `
+              -G Ninja `
+              -S ${{ github.workspace }}/SourceCache/cmake `
+              -D CMAKE_BUILD_TYPE=Release `
+              -D CMAKE_SYSTEM_NAME=Windows `
+              -D CMAKE_SYSTEM_PROCESSOR=${{ matrix.cmake_arch }}
     - run: cmake --build ${{ github.workspace }}/BinaryCache/cmake
     - run: |
         cd ${{ github.workspace }}/BinaryCache/cmake
-        cpack -G WIX
-    - uses: actions/upload-artifact@v3
+        cpack -G WIX -D CPACK_SYSTEM_NAME=windows -D CPACK_TOPLEVEL_TAG=windows-${{ matrix.cpack_arch }}
+    - uses: actions/upload-artifact@v4
+      with:
+        name: cmake-windows-${{ matrix.arch }}
+        path: ${{ github.workspace }}/BinaryCache/cmake/*.msi
+
+  release:
+    runs-on: windows-latest
+    needs: [build]
+
+    steps:
+    - uses: actions/download-artifact@v4
       with:
         name: cmake-windows-amd64
-        path: ${{ github.workspace }}/BinaryCache/cmake/*.msi
+        path: ${{ github.workspace }}/tmp/amd64
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: cmake-windows-arm64
+        path: ${{ github.workspace }}/tmp/arm64
+
     - id: vars
       run: |
-        $Msi = Get-ChildItem ${{ github.workspace }}/BinaryCache/cmake/*.msi | Select-Object -First 1
-        $Artifact = $Msi.Name
-        $Location = $Msi.FullName
-        $Release = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
-        Write-Output "artifact=$($Artifact)" >> $Env:GITHUB_OUTPUT
-        Write-Output "location=$($Location)" >> $Env:GITHUB_OUTPUT
-        Write-Output "release=$($Release)" >> $Env:GITHUB_OUTPUT
+        $Msi = Get-ChildItem ${{ github.workspace }}/tmp/amd64/*.msi | Select-Object -First 1
+        Write-Output "artifact=$($Msi.Name)" >> $Env:GITHUB_OUTPUT
+
     - uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -37,13 +70,23 @@ jobs:
       with:
         draft: false
         prerelease: false
-        release_name: ${{ steps.vars.outputs.release }}
-        tag_name: ${{ steps.vars.outputs.release }}
+        release_name: cmake-windows-${{ github.sha }}
+        tag_name: cmake-windows-${{ github.sha }}
+
     - uses: actions/upload-release-asset@v1.0.2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         asset_content_type: application/octet-stream
-        asset_name: ${{ steps.vars.outputs.artifact }}
-        asset_path: ${{ steps.vars.outputs.location }}
+        asset_name: cmake-windows-amd64.msi
+        asset_path: ${{ github.workspace }}\tmp\amd64\${{ steps.vars.outputs.artifact }}
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+
+    - uses: actions/upload-release-asset@v1.0.2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        asset_content_type: application/octet-stream
+        asset_name: cmake-windows-arm64.msi
+        asset_path: ${{ github.workspace }}\tmp\arm64\${{ steps.vars.outputs.artifact }}
         upload_url: ${{ steps.create_release.outputs.upload_url }}
